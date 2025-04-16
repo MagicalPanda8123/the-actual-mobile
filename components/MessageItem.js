@@ -21,7 +21,7 @@ export default function MessageItem({ message, isOwnMessage }) {
         isOwnMessage ? styles.ownMessage : styles.otherMessage
       ]}>
       <Text style={styles.messageText}>{message.content}</Text>
-      <Text style={styles.messageTime}>{messageTime}</Text>{' '}
+      <Text style={styles.messageTime}>{messageTime}</Text>
       {/* Display the time */}
     </View>
   )

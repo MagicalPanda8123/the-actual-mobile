@@ -13,6 +13,7 @@ import {
   SafeAreaView
 } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { io } from 'socket.io-client'
 import MessageItem from '../components/MessageItem'
 
 export default function ChatScreen({ route, navigation }) {
@@ -21,8 +22,38 @@ export default function ChatScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState('')
   const [newMessage, setNewMessage] = useState('')
+  const [socket, setSocket] = useState(null)
 
   useEffect(() => {
+    const initializeSocket = async () => {
+      const token = await AsyncStorage.getItem('token')
+      const user = JSON.parse(await AsyncStorage.getItem('user'))
+      setUserId(user.id)
+
+      // Connect to the Socket.IO server
+      const newSocket = io('http://localhost:3000', {
+        auth: { userId: user.id } // Pass userId for authentication
+      })
+      setSocket(newSocket)
+
+      // Listen for new messages
+      newSocket.on('new_message', (message) => {
+        // console.log(`new message received : ${message.content}`)
+        if (message.conversationId === conversationId) {
+          setMessages((prevMessages) => [message, ...prevMessages])
+        }
+      })
+
+      return () => {
+        newSocket.disconnect() // Disconnect when the component unmounts
+      }
+    }
+
+    initializeSocket()
+  }, [conversationId])
+
+  useEffect(() => {
+    // fetch messages for the selected conversation
     const fetchMessages = async () => {
       try {
         const token = await AsyncStorage.getItem('token')
@@ -30,7 +61,7 @@ export default function ChatScreen({ route, navigation }) {
         setUserId(user.id)
 
         const response = await fetch(
-          `http://localhost:3000/api/conversations/${conversationId}/messages`,
+          `http://localhost:3000/api/conversations/${conversationId}/messages?limit=3`,
           {
             method: 'GET',
             headers: {
@@ -57,6 +88,7 @@ export default function ChatScreen({ route, navigation }) {
   }, [conversationId])
 
   useEffect(() => {
+    // Change the chat screen metadata if the user switches to another convo
     navigation.setOptions({
       headerTitle: recipientName,
       headerTitleAlign: 'center',
@@ -72,14 +104,25 @@ export default function ChatScreen({ route, navigation }) {
   const handleSendMessage = () => {
     if (!newMessage.trim()) return
 
-    const newMessageObject = {
-      messageId: Date.now().toString(),
-      createdAt: new Date().toISOString(),
-      senderId: userId,
-      type: 'TEXT',
-      content: newMessage
+    const messageObject = {
+      conversationId,
+      content: newMessage,
+      type: 'TEXT'
     }
-    setMessages((prevMessages) => [newMessageObject, ...prevMessages])
+
+    // Emit the message to the server
+    socket.emit('send_message', messageObject)
+
+    // Add the message to the local state
+    setMessages((prevMessages) => [
+      {
+        ...messageObject,
+        senderId: userId,
+        messageId: Date.now().toString(),
+        createdAt: new Date().toISOString()
+      },
+      ...prevMessages
+    ])
     setNewMessage('')
   }
 
@@ -99,7 +142,7 @@ export default function ChatScreen({ route, navigation }) {
         <View style={styles.chatContainer}>
           <View style={styles.messageSection}>
             <FlatList
-              data={messages}
+              data={[...messages].reverse()}
               keyExtractor={(item) => item.messageId}
               renderItem={({ item }) => (
                 <MessageItem
@@ -107,8 +150,9 @@ export default function ChatScreen({ route, navigation }) {
                   isOwnMessage={item.senderId === userId}
                 />
               )}
-              inverted // Keeps the newest messages at the bottom
-              contentContainerStyle={styles.messageList} // Ensures proper spacing
+              // inverted
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.messageList} // Ensures proper spacing and scrollability
             />
           </View>
           <View style={styles.inputContainer}>
@@ -140,23 +184,15 @@ const styles = StyleSheet.create({
     flex: 1 // Ensures the entire chat container takes up the full screen
   },
   messageSection: {
-    flex: 8 // 80% of the remaining screen height
+    flex: 1, // Ensures the message section takes up the remaining space
+    overflow: 'hidden'
   },
   messageList: {
+    justifyContent: 'flex-end', // Aligns messages to the bottom when inverted
     paddingBottom: 10 // Adds spacing to avoid overlap with the input section
   },
-  goBack: {
-    marginLeft: 10,
-    color: '#007bff',
-    fontSize: 16
-  },
-  chatOptions: {
-    marginRight: 10,
-    color: '#007bff',
-    fontSize: 16
-  },
   inputContainer: {
-    flex: 2,
+    height: 60, // Fixed height for the input section
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -172,5 +208,15 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 10,
     marginRight: 10
+  },
+  goBack: {
+    marginLeft: 10,
+    color: '#007bff',
+    fontSize: 16
+  },
+  chatOptions: {
+    marginRight: 10,
+    color: '#007bff',
+    fontSize: 16
   }
 })
