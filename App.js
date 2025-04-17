@@ -56,7 +56,7 @@ function MainTabs() {
           backgroundColor: '#f9f9f9', // Background color for the tab bar
           borderTopWidth: 1,
           borderTopColor: '#ccc',
-          height: 70, // Adjust the height of the tab bar
+          height: 100, // Adjust the height of the tab bar
           paddingBottom: 10, // Add padding at the bottom for better spacing
           paddingTop: 5 // Add padding at the top for better spacing
         },
