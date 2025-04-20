@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import {
   View,
   FlatList,
@@ -10,17 +10,55 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import config from '../config'
 import ConversationItem from '../components/ConversationItem'
+import io from 'socket.io-client'
 
 export default function ConversationsScreen({ navigation }) {
   const [conversations, setConversations] = useState([])
   const [loading, setLoading] = useState(true)
-  const [searchQuery, setSearchQuery] = useState('') // State for search query
-  const [filteredConversations, setFilteredConversations] = useState([]) // State for filtered conversations
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filteredConversations, setFilteredConversations] = useState([])
+  const socketRef = useRef(null)
+  const currentlyOpenedConversationId = useRef(null)
 
   useEffect(() => {
+    const initializeSocket = async () => {
+      try {
+        const user = await AsyncStorage.getItem('user') // Retrieve the user object as a string
+        if (!user) {
+          console.error('User not found in AsyncStorage')
+          return
+        }
+
+        const parsedUser = JSON.parse(user) // Parse the string into an object
+        console.log('Parsed user:', parsedUser)
+
+        const userId = parsedUser.id // Access the userId from the parsed object
+        if (!userId) {
+          console.error('User ID not found in the user object')
+          return
+        }
+
+        // Initialize Socket.io connection
+        socketRef.current = io(config.SOCKET_SERVER_URL, {
+          transports: ['websocket'],
+          auth: {
+            userId // Pass the userId in the auth object
+          }
+        })
+
+        socketRef.current.on('connect', () => {
+          console.log('Socket connected')
+        })
+
+        socketRef.current.on('conversation-update', handleConversationUpdate)
+      } catch (error) {
+        console.error('Error initializing socket:', error)
+      }
+    }
+
     const fetchConversations = async () => {
       try {
-        const token = await AsyncStorage.getItem('token') // Retrieve the token from AsyncStorage
+        const token = await AsyncStorage.getItem('token')
         if (!token) {
           Alert.alert('Error', 'Authentication token not found')
           return
@@ -29,15 +67,46 @@ export default function ConversationsScreen({ navigation }) {
         const response = await fetch(`${config.BASE_URL}/api/conversations`, {
           method: 'GET',
           headers: {
-            Authorization: `Bearer ${token}` // Add token to Authorization header
+            Authorization: `Bearer ${token}`
           }
         })
 
         const result = await response.json()
 
         if (response.ok) {
-          setConversations(result.conversations) // Set the conversations in state
-          setFilteredConversations(result.conversations) // Initialize filtered conversations
+          const mappedConversations = result.conversations.map(
+            (conversation) => {
+              if (conversation.type === 'ONE-TO-ONE') {
+                return {
+                  conversationId: conversation.conversationId,
+                  name: `${
+                    conversation.recipient?.profile?.firstName || 'Unknown'
+                  } ${conversation.recipient?.profile?.lastName || ''}`,
+                  avatar:
+                    conversation.recipient?.profile?.avatar ||
+                    require('../assets/avatar.png'),
+                  lastMessageText: conversation.lastMessageText,
+                  lastMessageAt: conversation.lastMessageAt,
+                  type: conversation.type
+                }
+              } else if (conversation.type === 'GROUP') {
+                return {
+                  conversationId: conversation.conversationId,
+                  name: conversation.groupName || 'Unnamed Group',
+                  avatar:
+                    conversation.groupImage ||
+                    require('../assets/group-avatar.png'),
+                  lastMessageText: conversation.lastMessageText,
+                  lastMessageAt: conversation.lastMessageAt,
+                  type: conversation.type
+                }
+              }
+              return conversation
+            }
+          )
+
+          setConversations(mappedConversations)
+          setFilteredConversations(mappedConversations)
         } else {
           Alert.alert('Error', result.error || 'Failed to fetch conversations')
         }
@@ -49,52 +118,95 @@ export default function ConversationsScreen({ navigation }) {
     }
 
     fetchConversations()
+    initializeSocket()
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect()
+      }
+    }
   }, [])
 
-  const handleSearch = async (query) => {
+  const handleConversationUpdate = ({
+    conversationId,
+    lastMessageText,
+    lastMessageAt
+  }) => {
+    if (conversationId === currentlyOpenedConversationId.current) return
+
+    console.log(
+      `update event received: ${conversationId} - ${lastMessageText} - ${lastMessageAt}`
+    )
+    setConversations((prev) => {
+      const existing = prev.find((c) => c.conversationId === conversationId)
+      let updatedList
+
+      if (existing) {
+        const updatedConversation = {
+          ...existing,
+          lastMessageText,
+          lastMessageAt,
+          unread: true
+        }
+        updatedList = [
+          updatedConversation,
+          ...prev.filter((c) => c.conversationId !== conversationId)
+        ]
+      } else {
+        updatedList = [
+          {
+            conversationId,
+            name: 'Unknown', // Fetch if needed
+            lastMessageText,
+            lastMessageAt,
+            unread: true
+          },
+          ...prev
+        ]
+      }
+
+      const sortedList = sortConversations(updatedList)
+      setFilteredConversations(sortedList) // Update filteredConversations
+      return sortedList
+    })
+  }
+
+  const sortConversations = (list) => {
+    return [...list].sort(
+      (a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt)
+    )
+  }
+
+  const handleSearch = (query) => {
     setSearchQuery(query)
 
     if (query.trim() === '') {
-      setFilteredConversations(conversations) // Reset to all conversations if query is empty
+      setFilteredConversations(conversations)
       return
     }
 
-    try {
-      const token = await AsyncStorage.getItem('token')
-      if (!token) {
-        Alert.alert('Error', 'Authentication token not found')
-        return
-      }
-
-      const response = await fetch(
-        `${config.BASE_URL}/api/conversations/search`,
-        {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ query }) // Send the search query to the server
-        }
-      )
-
-      const result = await response.json()
-
-      if (response.ok) {
-        setFilteredConversations(result.conversations) // Update filtered conversations
-      } else {
-        Alert.alert('Error', result.error || 'Failed to search conversations')
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Something went wrong while searching.')
-    }
+    const filtered = conversations.filter((conversation) =>
+      conversation.name.toLowerCase().includes(query.toLowerCase())
+    )
+    setFilteredConversations(filtered)
   }
 
   const handleConversationPress = (conversation) => {
-    const recipientName = `${conversation.recipient.profile.firstName} ${conversation.recipient.profile.lastName}`
+    currentlyOpenedConversationId.current = conversation.conversationId
+
+    setConversations((prev) =>
+      sortConversations(
+        prev.map((conv) =>
+          conv.conversationId === conversation.conversationId
+            ? { ...conv, unread: false }
+            : conv
+        )
+      )
+    )
+
     navigation.navigate('Chat', {
       conversationId: conversation.conversationId,
-      recipientName
+      recipientName: conversation.name // Use the standardized 'name' field
     })
   }
 
@@ -108,7 +220,6 @@ export default function ConversationsScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Search Bar */}
       <TextInput
         style={styles.searchBar}
         placeholder="Search conversations..."
@@ -117,7 +228,6 @@ export default function ConversationsScreen({ navigation }) {
         placeholderTextColor="#aaa"
       />
 
-      {/* Conversations List */}
       <FlatList
         data={filteredConversations}
         keyExtractor={(item) => item.conversationId}

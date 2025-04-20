@@ -11,35 +11,18 @@ const formatTime = (isoString) => {
   return new Date(isoString).toLocaleTimeString('en-US', options)
 }
 
-const formatDateTime = (isoString) => {
-  const options = {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Asia/Bangkok'
-  }
-  return new Date(isoString).toLocaleString('en-US', options)
-}
-
 export default function ConversationItem({ conversation, onPress }) {
-  const recipient = conversation.recipient
-  const avatar = recipient.profile.avatar || require('../assets/avatar.png') // Use default avatar if not present
-  const lastMessageTime = formatTime(conversation.lastMessageAt) // Format the last message time
-  const lastMessageDateTime = formatDateTime(conversation.lastMessageAt)
+  const { name, avatar, lastMessageText, lastMessageAt } = conversation
+  const lastMessageTime = formatTime(lastMessageAt) // Format the last message time
 
   return (
     <TouchableOpacity onPress={onPress} style={styles.container}>
       <Image source={avatar} style={styles.avatar} />
       <View style={styles.textContainer}>
-        <Text style={styles.name}>
-          {recipient.profile.firstName} {recipient.profile.lastName}
-        </Text>
-        <Text style={styles.lastMessage}>{conversation.lastMessageText}</Text>
+        <Text style={styles.name}>{name}</Text>
+        <Text style={styles.lastMessage}>{lastMessageText}</Text>
       </View>
       <Text style={styles.time}>{lastMessageTime}</Text>
-      {/* Display the time */}
     </TouchableOpacity>
   )
 }

@@ -85,7 +85,7 @@ export default function RegisterScreen({ navigation }) {
     setLoading(true)
 
     try {
-      const response = await fetch(`${config.BASE_URL}/auth/register`, {
+      const response = await fetch(`${config.BASE_URL}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
