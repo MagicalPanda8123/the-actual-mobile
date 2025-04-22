@@ -1,5 +1,5 @@
 import React from 'react'
-import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native'
+import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native'
 
 // Helper function to format the date
 const formatTime = (isoString) => {
@@ -12,28 +12,46 @@ const formatTime = (isoString) => {
 }
 
 export default function ConversationItem({ conversation, onPress }) {
-  const { name, avatar, lastMessageText, lastMessageAt } = conversation
-  const lastMessageTime = formatTime(lastMessageAt) // Format the last message time
+  const { name, avatar, lastMessageText, unread, lastMessageAt } = conversation
 
   return (
-    <TouchableOpacity onPress={onPress} style={styles.container}>
+    <TouchableOpacity style={styles.container} onPress={onPress}>
       <Image source={avatar} style={styles.avatar} />
       <View style={styles.textContainer}>
-        <Text style={styles.name}>{name}</Text>
-        <Text style={styles.lastMessage}>{lastMessageText}</Text>
+        <Text style={[styles.name, unread && styles.unreadName]}>{name}</Text>
+        <Text style={[styles.lastMessage, unread && styles.unreadMessage]}>
+          {lastMessageText}
+        </Text>
       </View>
-      <Text style={styles.time}>{lastMessageTime}</Text>
+      <View style={styles.rightContainer}>
+        <Text style={styles.timestamp}>
+          {formatTime(lastMessageAt)} {/* Format the timestamp */}
+        </Text>
+        {unread && <View style={styles.unreadIndicator} />}
+      </View>
     </TouchableOpacity>
+  )
+}
+
+export function MessageItem({ message, isOwnMessage }) {
+  return (
+    <View
+      style={[
+        styles.messageContainer,
+        isOwnMessage ? styles.ownMessageContainer : styles.otherMessageContainer
+      ]}>
+      <Text style={styles.messageText}>{message.content}</Text>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
+    alignItems: 'center',
     padding: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#ccc',
-    alignItems: 'center'
+    borderBottomColor: '#ccc'
   },
   avatar: {
     width: 50,
@@ -42,20 +60,60 @@ const styles = StyleSheet.create({
     marginRight: 10
   },
   textContainer: {
-    flex: 1,
-    justifyContent: 'center'
+    flex: 1
   },
   name: {
     fontSize: 16,
+    fontWeight: 'normal',
+    color: '#333'
+  },
+  unreadName: {
     fontWeight: 'bold'
   },
   lastMessage: {
     fontSize: 14,
     color: '#666'
   },
-  time: {
+  unreadMessage: {
+    fontWeight: 'bold',
+    color: '#000'
+  },
+  rightContainer: {
+    alignItems: 'flex-end',
+    justifyContent: 'center'
+  },
+  timestamp: {
     fontSize: 12,
     color: '#999',
-    marginLeft: 10
+    marginBottom: 5
+  },
+  unreadIndicator: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#007BFF',
+    marginTop: 5
+  },
+  messageContainer: {
+    marginVertical: 5,
+    padding: 10,
+    borderRadius: 10,
+    maxWidth: '80%'
+  },
+  ownMessageContainer: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#007bff',
+    borderTopRightRadius: 0
+  },
+  otherMessageContainer: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#f1f1f1',
+    borderTopLeftRadius: 0
+  },
+  messageText: {
+    color: '#fff'
+  },
+  otherMessageText: {
+    color: '#000'
   }
 })

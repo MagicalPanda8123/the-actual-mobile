@@ -1,6 +1,6 @@
 import React from 'react'
 import { View, Text, Button, StyleSheet } from 'react-native'
-import { useAuth } from '../AuthContext'
+import { useAuth } from '../context/AuthContext'
 
 export default function SettingsScreen() {
   const { logout } = useAuth()

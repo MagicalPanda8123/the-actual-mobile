@@ -37,7 +37,7 @@ import {
   StatusBar
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
-import { useAuth } from '../AuthContext'
+import { useAuth } from '../context/AuthContext'
 import config from '../config'
 
 export default function RegisterScreen({ navigation }) {

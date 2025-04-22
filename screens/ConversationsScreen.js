@@ -1,64 +1,22 @@
 import React, { useEffect, useState, useRef } from 'react'
-import {
-  View,
-  FlatList,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
-  TextInput
-} from 'react-native'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import { View, FlatList, StyleSheet, ActivityIndicator, Alert, TextInput } from 'react-native'
+import { useAuth } from '../context/AuthContext' // Import useAuth
+import { useSocket } from '../context/SocketContext' // Import useSocket
 import config from '../config'
 import ConversationItem from '../components/ConversationItem'
-import io from 'socket.io-client'
 
 export default function ConversationsScreen({ navigation }) {
+  const { token } = useAuth() // Get the JWT from AuthContext
+  const { socket, isConnected } = useSocket() // Get the socket connection and connection status from SocketContext
   const [conversations, setConversations] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [filteredConversations, setFilteredConversations] = useState([])
-  const socketRef = useRef(null)
   const currentlyOpenedConversationId = useRef(null)
 
   useEffect(() => {
-    const initializeSocket = async () => {
-      try {
-        const user = await AsyncStorage.getItem('user') // Retrieve the user object as a string
-        if (!user) {
-          console.error('User not found in AsyncStorage')
-          return
-        }
-
-        const parsedUser = JSON.parse(user) // Parse the string into an object
-        console.log('Parsed user:', parsedUser)
-
-        const userId = parsedUser.id // Access the userId from the parsed object
-        if (!userId) {
-          console.error('User ID not found in the user object')
-          return
-        }
-
-        // Initialize Socket.io connection
-        socketRef.current = io(config.SOCKET_SERVER_URL, {
-          transports: ['websocket'],
-          auth: {
-            userId // Pass the userId in the auth object
-          }
-        })
-
-        socketRef.current.on('connect', () => {
-          console.log('Socket connected')
-        })
-
-        socketRef.current.on('conversation-update', handleConversationUpdate)
-      } catch (error) {
-        console.error('Error initializing socket:', error)
-      }
-    }
-
     const fetchConversations = async () => {
       try {
-        const token = await AsyncStorage.getItem('token')
         if (!token) {
           Alert.alert('Error', 'Authentication token not found')
           return
@@ -74,36 +32,21 @@ export default function ConversationsScreen({ navigation }) {
         const result = await response.json()
 
         if (response.ok) {
-          const mappedConversations = result.conversations.map(
-            (conversation) => {
-              if (conversation.type === 'ONE-TO-ONE') {
-                return {
-                  conversationId: conversation.conversationId,
-                  name: `${
-                    conversation.recipient?.profile?.firstName || 'Unknown'
-                  } ${conversation.recipient?.profile?.lastName || ''}`,
-                  avatar:
-                    conversation.recipient?.profile?.avatar ||
-                    require('../assets/avatar.png'),
-                  lastMessageText: conversation.lastMessageText,
-                  lastMessageAt: conversation.lastMessageAt,
-                  type: conversation.type
-                }
-              } else if (conversation.type === 'GROUP') {
-                return {
-                  conversationId: conversation.conversationId,
-                  name: conversation.groupName || 'Unnamed Group',
-                  avatar:
-                    conversation.groupImage ||
-                    require('../assets/group-avatar.png'),
-                  lastMessageText: conversation.lastMessageText,
-                  lastMessageAt: conversation.lastMessageAt,
-                  type: conversation.type
-                }
-              }
-              return conversation
-            }
-          )
+          const mappedConversations = result.conversations.map((conversation) => ({
+            conversationId: conversation.conversationId,
+            name:
+              conversation.type === 'ONE-TO-ONE'
+                ? `${conversation.recipient?.profile?.firstName || 'Unknown'} ${conversation.recipient?.profile?.lastName || ''}`
+                : conversation.groupName || 'Unnamed Group',
+            avatar:
+              conversation.type === 'ONE-TO-ONE'
+                ? conversation.recipient?.profile?.avatar || require('../assets/avatar.png')
+                : require('../assets/group-avatar.png'),
+            lastMessageText: conversation.lastMessageText,
+            lastMessageAt: conversation.lastMessageAt,
+            unread: conversation.unread, // Include the unread field
+            type: conversation.type
+          }))
 
           setConversations(mappedConversations)
           setFilteredConversations(mappedConversations)
@@ -118,25 +61,38 @@ export default function ConversationsScreen({ navigation }) {
     }
 
     fetchConversations()
-    initializeSocket()
 
+    // Listen for conversation updates from the socket
+    if (socket && isConnected) {
+      socket.on('new-conversation', () => {
+        console.log('New conversation event received, re-fetching conversations...')
+        fetchConversations() // Re-fetch conversations on new-conversation event
+      })
+    }
+
+    // Cleanup the socket listener on unmount
     return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect()
+      if (socket) {
+        socket.off('new-conversation') // Remove the listener
       }
     }
-  }, [])
+  }, [socket, isConnected, token]) // Dependencies: socket, isConnected, and token
+
+  useEffect(() => {
+    if (searchQuery.trim() === '') {
+      setFilteredConversations(conversations)
+    } else {
+      const filtered = conversations.filter((conversation) => conversation.name.toLowerCase().includes(searchQuery.toLowerCase()))
+      setFilteredConversations(filtered)
+    }
+  }, [conversations, searchQuery])
 
   const handleConversationUpdate = ({
     conversationId,
     lastMessageText,
-    lastMessageAt
+    lastMessageAt,
+    senderId // Include senderId in the event payload
   }) => {
-    if (conversationId === currentlyOpenedConversationId.current) return
-
-    console.log(
-      `update event received: ${conversationId} - ${lastMessageText} - ${lastMessageAt}`
-    )
     setConversations((prev) => {
       const existing = prev.find((c) => c.conversationId === conversationId)
       let updatedList
@@ -146,12 +102,10 @@ export default function ConversationsScreen({ navigation }) {
           ...existing,
           lastMessageText,
           lastMessageAt,
-          unread: true
+          unread: senderId !== 'me' && conversationId !== currentlyOpenedConversationId.current
+          // Set unread to true only if the sender is not the current user and the conversation is not currently opened
         }
-        updatedList = [
-          updatedConversation,
-          ...prev.filter((c) => c.conversationId !== conversationId)
-        ]
+        updatedList = [updatedConversation, ...prev.filter((c) => c.conversationId !== conversationId)]
       } else {
         updatedList = [
           {
@@ -159,7 +113,7 @@ export default function ConversationsScreen({ navigation }) {
             name: 'Unknown', // Fetch if needed
             lastMessageText,
             lastMessageAt,
-            unread: true
+            unread: senderId !== 'me' // New conversations should be marked unread unless sent by the current user
           },
           ...prev
         ]
@@ -172,9 +126,7 @@ export default function ConversationsScreen({ navigation }) {
   }
 
   const sortConversations = (list) => {
-    return [...list].sort(
-      (a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt)
-    )
+    return [...list].sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt))
   }
 
   const handleSearch = (query) => {
@@ -185,28 +137,39 @@ export default function ConversationsScreen({ navigation }) {
       return
     }
 
-    const filtered = conversations.filter((conversation) =>
-      conversation.name.toLowerCase().includes(query.toLowerCase())
-    )
+    const filtered = conversations.filter((conversation) => conversation.name.toLowerCase().includes(query.toLowerCase()))
     setFilteredConversations(filtered)
   }
 
+  // set unread to false when user opens the chat
   const handleConversationPress = (conversation) => {
+    // Set the currently opened conversation ID
     currentlyOpenedConversationId.current = conversation.conversationId
+    console.log(conversation.conversationId)
 
+    // Update the unread status of the selected conversation to false
     setConversations((prev) =>
-      sortConversations(
-        prev.map((conv) =>
-          conv.conversationId === conversation.conversationId
-            ? { ...conv, unread: false }
-            : conv
-        )
+      prev.map((conv) =>
+        conv.conversationId === conversation.conversationId
+          ? { ...conv, unread: false } // Create a new object with updated unread property
+          : conv
       )
     )
 
+    console.log(conversation)
+
+    // Emit open-conversation event to the server
+    if (socket && isConnected) {
+      socket.emit('open-conversation', {
+        conversationId: conversation.conversationId
+      })
+    }
+
+    // Navigate to the Chat screen and pass currentlyOpenedConversationId
     navigation.navigate('Chat', {
       conversationId: conversation.conversationId,
-      recipientName: conversation.name // Use the standardized 'name' field
+      recipientName: conversation.name,
+      currentlyOpenedConversationId // Pass the ref value
     })
   }
 
@@ -220,23 +183,12 @@ export default function ConversationsScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <TextInput
-        style={styles.searchBar}
-        placeholder="Search conversations..."
-        value={searchQuery}
-        onChangeText={handleSearch}
-        placeholderTextColor="#aaa"
-      />
+      <TextInput style={styles.searchBar} placeholder="Search conversations..." value={searchQuery} onChangeText={handleSearch} placeholderTextColor="#aaa" />
 
       <FlatList
         data={filteredConversations}
         keyExtractor={(item) => item.conversationId}
-        renderItem={({ item }) => (
-          <ConversationItem
-            conversation={item}
-            onPress={() => handleConversationPress(item)}
-          />
-        )}
+        renderItem={({ item }) => <ConversationItem conversation={item} onPress={() => handleConversationPress(item)} />}
       />
     </View>
   )

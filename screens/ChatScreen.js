@@ -7,95 +7,59 @@ import {
   Alert,
   Text,
   TextInput,
-  Button,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
   Keyboard,
   TouchableWithoutFeedback,
-  TouchableOpacity,
-  Image,
-  Modal
+  TouchableOpacity
 } from 'react-native'
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import { io } from 'socket.io-client'
+import { useAuth } from '../context/AuthContext' // Import useAuth
+import { useSocket } from '../context/SocketContext' // Import useSocket
 import MessageItem from '../components/MessageItem'
 import config from '../config'
-import * as ImagePicker from 'expo-image-picker'
-import * as DocumentPicker from 'expo-document-picker'
-import * as FileSystem from 'expo-file-system'
-import { Ionicons } from '@expo/vector-icons'
 
 export default function ChatScreen({ route, navigation }) {
-  const { conversationId, recipientName } = route.params
+  const { conversationId, recipientName, currentlyOpenedConversationId } =
+    route.params
+  const { socket, isConnected } = useSocket() // Use the single socket connection from SocketContext
+  const { token } = useAuth() // Get the JWT token from AuthContext
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
-  const [userId, setUserId] = useState('')
   const [newMessage, setNewMessage] = useState('')
-  const [socket, setSocket] = useState(null)
   const flatListRef = useRef(null)
   const [sending, setSending] = useState(false)
-  const [mediaPickerVisible, setMediaPickerVisible] = useState(false)
-  const [selectedMedia, setSelectedMedia] = useState(null)
-  const [mediaPreviewVisible, setMediaPreviewVisible] = useState(false)
 
   useEffect(() => {
-    const initializeSocket = async () => {
-      const token = await AsyncStorage.getItem('token')
-      const user = JSON.parse(await AsyncStorage.getItem('user'))
-      setUserId(user.id)
+    if (socket && isConnected) {
+      // Emit "open-conversation" event when the screen is opened
+      socket.emit('open-conversation', { conversationId })
 
-      // Connect to the Socket.IO server
-      const newSocket = io(`${config.BASE_URL}`, {
-        auth: { userId: user.id } // Pass userId for authentication
-      })
-      setSocket(newSocket)
+      // Listen for "new-message" events
+      socket.on('new-message', handleNewMessage)
+    }
 
-      // Listen for new messages
-      newSocket.on('new_message', (message) => {
-        if (message.conversationId === conversationId) {
-          setMessages((prevMessages) => {
-            const updatedMessages = [message, ...prevMessages]
-            // Scroll to bottom on next render
-            setTimeout(() => scrollToBottom(), 100)
-            return updatedMessages
-          })
+    // Cleanup socket listeners and emit "close-conversation" on unmount
+    return () => {
+      if (socket) {
+        // Emit "close-conversation" event
+        socket.emit('close-conversation', { conversationId })
+
+        // Reset the currently opened conversation id
+        if (currentlyOpenedConversationId) {
+          currentlyOpenedConversationId.current = null
         }
-      })
 
-      return () => {
-        newSocket.disconnect() // Disconnect when the component unmounts
+        // Remove "new-message" listener
+        socket.off('new-message', handleNewMessage)
       }
     }
-
-    initializeSocket()
-    requestPermissions()
-  }, [conversationId])
-
-  const requestPermissions = async () => {
-    if (Platform.OS !== 'web') {
-      const { status: cameraStatus } =
-        await ImagePicker.requestCameraPermissionsAsync()
-      const { status: libraryStatus } =
-        await ImagePicker.requestMediaLibraryPermissionsAsync()
-
-      if (cameraStatus !== 'granted' || libraryStatus !== 'granted') {
-        Alert.alert(
-          'Permission required',
-          'Please grant camera and media library permissions to use this feature'
-        )
-      }
-    }
-  }
+  }, [socket, isConnected, conversationId, currentlyOpenedConversationId])
 
   useEffect(() => {
-    // fetch messages for the selected conversation
+    // Fetch messages for the selected conversation
     const fetchMessages = async () => {
       try {
-        const token = await AsyncStorage.getItem('token')
-        const user = JSON.parse(await AsyncStorage.getItem('user'))
-        setUserId(user.id)
-
         const response = await fetch(
           `${config.BASE_URL}/api/conversations/${conversationId}/messages?limit=30`,
           {
@@ -110,7 +74,7 @@ export default function ChatScreen({ route, navigation }) {
 
         if (response.ok) {
           setMessages(result.messages)
-          // Scroll to bottom after messages load
+          // Scroll to the bottom after messages load
           setTimeout(() => scrollToBottom(), 100)
         } else {
           Alert.alert('Error', result.error || 'Failed to fetch messages')
@@ -123,21 +87,15 @@ export default function ChatScreen({ route, navigation }) {
     }
 
     fetchMessages()
-  }, [conversationId])
+  }, [conversationId, token])
 
-  useEffect(() => {
-    // Change the chat screen metadata if the user switches to another convo
-    navigation.setOptions({
-      headerTitle: recipientName,
-      headerTitleAlign: 'center',
-      headerLeft: () => (
-        <Text onPress={() => navigation.goBack()} style={styles.goBack}>
-          Back
-        </Text>
-      ),
-      headerRight: () => <Text style={styles.chatOptions}>Options</Text>
-    })
-  }, [navigation, recipientName])
+  const handleNewMessage = (message) => {
+    if (message.conversationId === conversationId) {
+      setMessages((prevMessages) => [message, ...prevMessages])
+      // Scroll to the bottom on the next render
+      setTimeout(() => scrollToBottom(), 100)
+    }
+  }
 
   const scrollToBottom = () => {
     if (flatListRef.current && messages.length > 0) {
@@ -145,178 +103,37 @@ export default function ChatScreen({ route, navigation }) {
     }
   }
 
-  const handleSendMessage = async () => {
-    if ((!newMessage.trim() && !selectedMedia) || sending) return
+  const handleSendMessage = () => {
+    if (!newMessage.trim() || sending) return
 
     setSending(true)
 
-    try {
-      const token = await AsyncStorage.getItem('token')
-
-      let messageObject = {
-        conversationId,
-        content: newMessage.trim(),
-        type: 'TEXT'
-      }
-
-      // If media is selected, upload it first
-      if (selectedMedia) {
-        const formData = new FormData()
-        formData.append('file', {
-          uri: selectedMedia.uri,
-          name:
-            selectedMedia.fileName ||
-            `${Date.now()}.${selectedMedia.uri.split('.').pop()}`,
-          type: selectedMedia.mimeType || 'application/octet-stream'
-        })
-
-        // Upload the file
-        const uploadResponse = await fetch(`${config.BASE_URL}/api/upload`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'multipart/form-data',
-            Authorization: `Bearer ${token}`
-          },
-          body: formData
-        })
-
-        const uploadResult = await uploadResponse.json()
-
-        if (!uploadResponse.ok) {
-          throw new Error(uploadResult.error || 'Failed to upload file')
-        }
-
-        // Update message object with file info
-        messageObject = {
-          ...messageObject,
-          fileUrl: uploadResult.fileUrl,
-          fileName: selectedMedia.fileName || 'File',
-          fileType: selectedMedia.mimeType,
-          fileSize: selectedMedia.fileSize,
-          type: selectedMedia.type // 'IMAGE', 'VIDEO', or 'FILE'
-        }
-      }
-
-      // Send message via socket
-      socket.emit('send_message', messageObject)
-
-      // Add the message to the local state
-      setMessages((prevMessages) => {
-        const updatedMessages = [
-          {
-            ...messageObject,
-            senderId: userId,
-            messageId: Date.now().toString(),
-            createdAt: new Date().toISOString()
-          },
-          ...prevMessages
-        ]
-        // Scroll to bottom on next render after updating messages
-        setTimeout(() => scrollToBottom(), 100)
-        return updatedMessages
-      })
-
-      // Clear inputs
-      setNewMessage('')
-      setSelectedMedia(null)
-      setMediaPreviewVisible(false)
-    } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to send message')
-    } finally {
-      setSending(false)
+    const messageObject = {
+      conversationId,
+      content: newMessage.trim(),
+      type: 'TEXT'
     }
-  }
 
-  const pickImage = async (useCamera = false) => {
-    try {
-      let result
-
-      if (useCamera) {
-        result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.All,
-          quality: 0.7,
-          allowsEditing: true
-        })
-      } else {
-        result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.All,
-          quality: 0.7,
-          allowsEditing: true
-        })
-      }
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0]
-
-        // Fetch file info
-        const fileInfo = await FileSystem.getInfoAsync(asset.uri)
-
-        // Check file size (e.g., limit to 10MB)
-        const maxFileSize = 10 * 1024 * 1024 // 10MB
-        if (fileInfo.size > maxFileSize) {
-          Alert.alert(
-            'Error',
-            'The selected file is too large. Please choose a smaller file.'
-          )
-          return
-        }
-
-        // Update state
-        setSelectedMedia({
-          uri: asset.uri,
-          fileName:
-            asset.fileName ||
-            `image-${Date.now()}.${asset.uri.split('.').pop()}`,
-          mimeType: asset.mimeType,
-          type: asset.type === 'video' ? 'VIDEO' : 'IMAGE',
-          fileSize: fileInfo.size
-        })
-
-        setMediaPreviewVisible(true)
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to pick image or video')
-    } finally {
-      // Close the media picker modal
-      setMediaPickerVisible(false)
+    // Emit "send-message" event to the server
+    if (socket && isConnected) {
+      socket.emit('send-message', messageObject)
     }
-  }
 
-  const pickDocument = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*',
-        copyToCacheDirectory: true
-      })
+    // Add the message to the local state
+    setMessages((prevMessages) => [
+      {
+        ...messageObject,
+        senderId: 'me', // Mark as sent by the current user
+        messageId: Date.now().toString(),
+        createdAt: new Date().toISOString()
+      },
+      ...prevMessages
+    ])
 
-      if (result.type === 'success') {
-        // Check file size (e.g., limit to 10MB)
-        const maxFileSize = 10 * 1024 * 1024 // 10MB
-        if (result.size > maxFileSize) {
-          Alert.alert(
-            'Error',
-            'The selected file is too large. Please choose a smaller file.'
-          )
-          return
-        }
-
-        // Update state
-        setSelectedMedia({
-          uri: result.uri,
-          fileName: result.name,
-          mimeType: result.mimeType,
-          type: 'FILE',
-          fileSize: result.size
-        })
-
-        setMediaPreviewVisible(true)
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to pick document')
-    } finally {
-      // Close the media picker modal
-      setMediaPickerVisible(false)
-    }
+    // Clear the input field
+    setNewMessage('')
+    setTimeout(() => scrollToBottom(), 100)
+    setSending(false)
   }
 
   if (loading) {
@@ -335,68 +152,23 @@ export default function ChatScreen({ route, navigation }) {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.chatContainer}>
-            <View style={styles.messageSection}>
-              <FlatList
-                ref={flatListRef}
-                data={messages}
-                keyExtractor={(item) => item.messageId}
-                renderItem={({ item }) => (
-                  <MessageItem
-                    message={item}
-                    isOwnMessage={item.senderId === userId}
-                  />
-                )}
-                inverted={true}
-                style={{ flex: 1 }}
-                contentContainerStyle={styles.messageList}
-                onContentSizeChange={scrollToBottom}
-                onLayout={scrollToBottom}
-              />
-            </View>
-
-            {/* Media Preview */}
-            {selectedMedia && mediaPreviewVisible && (
-              <View style={styles.mediaPreviewContainer}>
-                {selectedMedia.type === 'IMAGE' && (
-                  <Image
-                    source={{ uri: selectedMedia.uri }}
-                    style={styles.mediaPreview}
-                  />
-                )}
-                {selectedMedia.type === 'VIDEO' && (
-                  <View style={styles.mediaPreview}>
-                    <Text style={styles.mediaLabel}>Video Selected</Text>
-                    <Text style={styles.mediaName}>
-                      {selectedMedia.fileName}
-                    </Text>
-                  </View>
-                )}
-                {selectedMedia.type === 'FILE' && (
-                  <View style={styles.mediaPreview}>
-                    <Text style={styles.mediaLabel}>File Selected</Text>
-                    <Text style={styles.mediaName}>
-                      {selectedMedia.fileName}
-                    </Text>
-                  </View>
-                )}
-                <TouchableOpacity
-                  style={styles.removeMediaButton}
-                  onPress={() => {
-                    setSelectedMedia(null)
-                    setMediaPreviewVisible(false)
-                  }}>
-                  <Text style={styles.removeMediaText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
+            <FlatList
+              ref={flatListRef}
+              data={messages}
+              keyExtractor={(item) => item.messageId}
+              renderItem={({ item }) => (
+                <MessageItem
+                  message={item}
+                  isOwnMessage={item.isCurrentUserSender} // Use the "isCurrentUserSender" field
+                />
+              )}
+              inverted={true}
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.messageList}
+              onContentSizeChange={scrollToBottom}
+              onLayout={scrollToBottom}
+            />
             <View style={styles.inputContainer}>
-              <TouchableOpacity
-                style={styles.attachButton}
-                onPress={() => setMediaPickerVisible(true)}>
-                <Ionicons name="attach" size={24} color="#007bff" />
-              </TouchableOpacity>
-
               <TextInput
                 style={styles.input}
                 placeholder="Type a message..."
@@ -405,66 +177,23 @@ export default function ChatScreen({ route, navigation }) {
                 multiline={true}
                 maxHeight={100}
               />
-
               <TouchableOpacity
                 style={[
                   styles.sendButton,
-                  !newMessage.trim() && !selectedMedia
-                    ? styles.sendButtonDisabled
-                    : null
+                  !newMessage.trim() ? styles.sendButtonDisabled : null
                 ]}
                 onPress={handleSendMessage}
-                disabled={(!newMessage.trim() && !selectedMedia) || sending}>
+                disabled={!newMessage.trim() || sending}>
                 {sending ? (
                   <ActivityIndicator size="small" color="#ffffff" />
                 ) : (
-                  <Ionicons name="send" size={20} color="#ffffff" />
+                  <Text style={styles.sendButtonText}>Send</Text>
                 )}
               </TouchableOpacity>
             </View>
           </View>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
-
-      {/* Media Picker Modal */}
-      <Modal
-        visible={mediaPickerVisible}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setMediaPickerVisible(false)}>
-        <TouchableWithoutFeedback onPress={() => setMediaPickerVisible(false)}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.mediaPickerContainer}>
-              <TouchableOpacity
-                style={styles.mediaPickerOption}
-                onPress={() => pickImage(false)}>
-                <Ionicons name="images" size={24} color="#007bff" />
-                <Text style={styles.mediaPickerText}>Photo Library</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.mediaPickerOption}
-                onPress={() => pickImage(true)}>
-                <Ionicons name="camera" size={24} color="#007bff" />
-                <Text style={styles.mediaPickerText}>Take Photo/Video</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.mediaPickerOption}
-                onPress={pickDocument}>
-                <Ionicons name="document" size={24} color="#007bff" />
-                <Text style={styles.mediaPickerText}>Document</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.mediaPickerOption, styles.cancelButton]}
-                onPress={() => setMediaPickerVisible(false)}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
     </SafeAreaView>
   )
 }
@@ -485,10 +214,6 @@ const styles = StyleSheet.create({
   chatContainer: {
     flex: 1
   },
-  messageSection: {
-    flex: 1,
-    overflow: 'hidden'
-  },
   messageList: {
     paddingVertical: 10
   },
@@ -499,10 +224,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#ccc',
     backgroundColor: '#f9f9f9'
-  },
-  attachButton: {
-    marginRight: 10,
-    padding: 5
   },
   input: {
     flex: 1,
@@ -516,7 +237,7 @@ const styles = StyleSheet.create({
   sendButton: {
     backgroundColor: '#007bff',
     borderRadius: 25,
-    width: 40,
+    width: 60,
     height: 40,
     justifyContent: 'center',
     alignItems: 'center'
@@ -524,91 +245,8 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: '#cccccc'
   },
-  goBack: {
-    marginLeft: 10,
-    color: '#007bff',
-    fontSize: 16
-  },
-  chatOptions: {
-    marginRight: 10,
-    color: '#007bff',
-    fontSize: 16
-  },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)'
-  },
-  mediaPickerContainer: {
-    backgroundColor: '#ffffff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20
-  },
-  mediaPickerOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0'
-  },
-  mediaPickerText: {
-    fontSize: 16,
-    marginLeft: 15
-  },
-  cancelButton: {
-    justifyContent: 'center',
-    borderBottomWidth: 0,
-    marginTop: 10
-  },
-  cancelText: {
-    fontSize: 16,
-    color: '#ff3b30',
-    fontWeight: 'bold',
-    textAlign: 'center'
-  },
-  mediaPreviewContainer: {
-    height: 70,
-    backgroundColor: '#f0f0f0',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    position: 'relative'
-  },
-  mediaPreview: {
-    width: 60,
-    height: 60,
-    backgroundColor: '#e0e0e0',
-    borderRadius: 5,
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden'
-  },
-  mediaLabel: {
-    fontSize: 12,
-    fontWeight: 'bold'
-  },
-  mediaName: {
-    fontSize: 10,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 5,
-    paddingHorizontal: 5
-  },
-  removeMediaButton: {
-    position: 'absolute',
-    right: 10,
-    top: 10,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 15,
-    width: 25,
-    height: 25,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  removeMediaText: {
-    color: '#fff',
-    fontSize: 14,
+  sendButtonText: {
+    color: '#ffffff',
     fontWeight: 'bold'
   }
 })
