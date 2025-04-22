@@ -8,14 +8,15 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null) // Store user information in memory
   const [isAuthenticated, setIsAuthenticated] = useState(false) // Authentication state
 
-  // Load the token from secure storage when the app starts
+  // Load the token and user from secure storage when the app starts
   useEffect(() => {
     const loadSession = async () => {
       const storedToken = await SecureStore.getItemAsync('jwt')
+      const storedUser = await SecureStore.getItemAsync('user')
 
-      if (storedToken) {
-        console.log(storedToken)
+      if (storedToken && storedUser) {
         setToken(storedToken)
+        setUser(JSON.parse(storedUser)) // Parse the stored user JSON
         setIsAuthenticated(true)
       }
     }
@@ -23,7 +24,7 @@ export const AuthProvider = ({ children }) => {
     loadSession()
   }, [])
 
-  // Login function to store the token in memory and secure storage
+  // Login function to store the token and user in memory and secure storage
   const login = async (data) => {
     const { token, user } = data
 
@@ -32,8 +33,9 @@ export const AuthProvider = ({ children }) => {
     setUser(user)
     setIsAuthenticated(true)
 
-    // Store the JWT in secure storage
+    // Store the JWT and user in secure storage
     await SecureStore.setItemAsync('jwt', token)
+    await SecureStore.setItemAsync('user', JSON.stringify(user)) // Store user as a JSON string
   }
 
   // Logout function to clear the token and user from memory and secure storage
@@ -43,16 +45,12 @@ export const AuthProvider = ({ children }) => {
     setUser(null)
     setIsAuthenticated(false)
 
-    // Clear the JWT from secure storage
+    // Clear the JWT and user from secure storage
     await SecureStore.deleteItemAsync('jwt')
+    await SecureStore.deleteItemAsync('user')
   }
 
-  return (
-    <AuthContext.Provider
-      value={{ token, user, isAuthenticated, login, logout }}>
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={{ token, user, isAuthenticated, login, logout }}>{children}</AuthContext.Provider>
 }
 
 export const useAuth = () => useContext(AuthContext)

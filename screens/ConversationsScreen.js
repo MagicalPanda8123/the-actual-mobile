@@ -70,6 +70,14 @@ export default function ConversationsScreen({ navigation }) {
       })
     }
 
+    if (socket && isConnected) {
+      // Listen for conversation-update events
+      socket.on('conversation-update', (data) => {
+        console.log('Conversation update event received:', data)
+        handleConversationUpdate(data) // Update the conversation in the state
+      })
+    }
+
     // Cleanup the socket listener on unmount
     return () => {
       if (socket) {

@@ -20,10 +20,9 @@ import MessageItem from '../components/MessageItem'
 import config from '../config'
 
 export default function ChatScreen({ route, navigation }) {
-  const { conversationId, recipientName, currentlyOpenedConversationId } =
-    route.params
+  const { conversationId, recipientName, currentlyOpenedConversationId } = route.params
   const { socket, isConnected } = useSocket() // Use the single socket connection from SocketContext
-  const { token } = useAuth() // Get the JWT token from AuthContext
+  const { token, user } = useAuth() // Get the JWT token from AuthContext
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
   const [newMessage, setNewMessage] = useState('')
@@ -60,15 +59,12 @@ export default function ChatScreen({ route, navigation }) {
     // Fetch messages for the selected conversation
     const fetchMessages = async () => {
       try {
-        const response = await fetch(
-          `${config.BASE_URL}/api/conversations/${conversationId}/messages?limit=30`,
-          {
-            method: 'GET',
-            headers: {
-              Authorization: `Bearer ${token}`
-            }
+        const response = await fetch(`${config.BASE_URL}/api/conversations/${conversationId}/messages?limit=30`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`
           }
-        )
+        })
 
         const result = await response.json()
 
@@ -120,15 +116,15 @@ export default function ChatScreen({ route, navigation }) {
     }
 
     // Add the message to the local state
-    setMessages((prevMessages) => [
-      {
-        ...messageObject,
-        senderId: 'me', // Mark as sent by the current user
-        messageId: Date.now().toString(),
-        createdAt: new Date().toISOString()
-      },
-      ...prevMessages
-    ])
+    // setMessages((prevMessages) => [
+    //   {
+    //     ...messageObject,
+    //     senderId: 'me', // Mark as sent by the current user
+    //     messageId: Date.now().toString(),
+    //     createdAt: new Date().toISOString()
+    //   },
+    //   ...prevMessages
+    // ])
 
     // Clear the input field
     setNewMessage('')
@@ -149,7 +145,8 @@ export default function ChatScreen({ route, navigation }) {
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 135 : 70} // Adjust offset for iOS and Android
+      >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={styles.chatContainer}>
             <FlatList
@@ -159,7 +156,7 @@ export default function ChatScreen({ route, navigation }) {
               renderItem={({ item }) => (
                 <MessageItem
                   message={item}
-                  isOwnMessage={item.isCurrentUserSender} // Use the "isCurrentUserSender" field
+                  isOwnMessage={item.senderId === user.id} // Compare senderId with the current user's ID
                 />
               )}
               inverted={true}
@@ -178,17 +175,10 @@ export default function ChatScreen({ route, navigation }) {
                 maxHeight={100}
               />
               <TouchableOpacity
-                style={[
-                  styles.sendButton,
-                  !newMessage.trim() ? styles.sendButtonDisabled : null
-                ]}
+                style={[styles.sendButton, !newMessage.trim() ? styles.sendButtonDisabled : null]}
                 onPress={handleSendMessage}
                 disabled={!newMessage.trim() || sending}>
-                {sending ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <Text style={styles.sendButtonText}>Send</Text>
-                )}
+                {sending ? <ActivityIndicator size="small" color="#ffffff" /> : <Text style={styles.sendButtonText}>Send</Text>}
               </TouchableOpacity>
             </View>
           </View>

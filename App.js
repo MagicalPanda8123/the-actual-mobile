@@ -12,7 +12,10 @@ import ChatScreen from './screens/ChatScreen'
 import SettingsScreen from './screens/SettingsScreen'
 import SearchUserScreen from './screens/SearchUserScreen'
 import GroupCreationScreen from './screens/GroupCreationScreen'
+import ConversationInfoScreen from './screens/ConversationInfoScreen'
 import Ionicons from '@expo/vector-icons/Ionicons'
+import InviteFriendScreen from './screens/InviteFriendScreen'
+
 import { TouchableOpacity, Text } from 'react-native'
 
 const Stack = createStackNavigator()
@@ -28,12 +31,8 @@ function ChatsStack() {
         options={({ navigation }) => ({
           headerTitle: 'Chats',
           headerRight: () => (
-            <TouchableOpacity
-              onPress={() => navigation.navigate('GroupCreation')}
-              style={{ marginRight: 15 }}>
-              <Text style={{ fontSize: 18, color: '#007bff' }}>
-                Create group
-              </Text>
+            <TouchableOpacity onPress={() => navigation.navigate('GroupCreation')} style={{ marginRight: 15 }}>
+              <Text style={{ fontSize: 18, color: '#007bff' }}>Create group</Text>
             </TouchableOpacity>
           )
         })}
@@ -41,15 +40,31 @@ function ChatsStack() {
       <Stack.Screen
         name="Chat"
         component={ChatScreen}
-        options={({ route }) => ({
-          headerTitle: route.params?.recipientName || 'Chat'
+        options={({ route, navigation }) => ({
+          headerTitle: route.params?.recipientName || 'Chat',
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() =>
+                navigation.navigate('ConversationInfo', {
+                  conversationId: route.params?.conversationId
+                })
+              }
+              style={{
+                marginRight: 20, // Add sufficient margin to the right
+                padding: 5 // Add padding for better touch area
+              }}>
+              <Ionicons name="information-circle-outline" size={28} color="#007bff" />
+            </TouchableOpacity>
+          )
         })}
       />
+      <Stack.Screen name="GroupCreation" component={GroupCreationScreen} options={{ headerTitle: 'Create Group' }} />
       <Stack.Screen
-        name="GroupCreation"
-        component={GroupCreationScreen}
-        options={{ headerTitle: 'Create Group' }}
+        name="ConversationInfo"
+        component={ConversationInfoScreen} // Add the ConversationInfoScreen here
+        options={{ headerTitle: 'Conversation Info' }}
       />
+      <Stack.Screen name="InviteFriend" component={InviteFriendScreen} />
     </Stack.Navigator>
   )
 }
@@ -58,16 +73,8 @@ function ChatsStack() {
 function FriendsStack() {
   return (
     <Stack.Navigator>
-      <Stack.Screen
-        name="FriendsHome"
-        component={FriendsScreen}
-        options={{ headerTitle: 'Friends' }}
-      />
-      <Stack.Screen
-        name="SearchUser"
-        component={SearchUserScreen}
-        options={{ headerTitle: 'Search User' }}
-      />
+      <Stack.Screen name="FriendsHome" component={FriendsScreen} options={{ headerTitle: 'Friends' }} />
+      <Stack.Screen name="SearchUser" component={SearchUserScreen} options={{ headerTitle: 'Search User' }} />
     </Stack.Navigator>
   )
 }
@@ -105,11 +112,7 @@ function MainTabs() {
         }
       })}>
       <Tab.Screen name="Chats" component={ChatsStack} />
-      <Tab.Screen
-        name="Friends"
-        component={FriendsStack}
-        options={{ headerShown: false }}
-      />
+      <Tab.Screen name="Friends" component={FriendsStack} options={{ headerShown: false }} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
   )
